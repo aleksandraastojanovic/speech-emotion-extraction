@@ -1,0 +1,21 @@
+# Dataset and large files
+data/
+processed/
+results/
+*.npy
+*.wav
+*.keras
+
+# Virtual environment
+.venv/
+
+# Project PDF
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
