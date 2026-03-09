@@ -46,7 +46,7 @@ EPOCHS                = 60
 LEARNING_RATE         = 1e-3
 
 # ── Transfer learning ──────────────────────────────────────────────────────
-PHASE1_EPOCHS  = 30   # frozen base: train only the new head
+PHASE1_EPOCHS  = 20   # frozen base: train only the new head
 PHASE2_EPOCHS  = 40   # unfreeze top layers: fine-tune end-to-end
 TRANSFER_LR    = 1e-3  # Phase 1 learning rate
 FINETUNE_LR    = 1e-4  # Phase 2 learning rate (10× smaller)

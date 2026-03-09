@@ -37,7 +37,7 @@ from keras import layers, regularizers, Model, Input
 from config import IMG_SIZE, NUM_CLASSES, TRANSFER_LR, FINETUNE_LR, FOCAL_GAMMA
 
 L2 = 1e-4
-FINETUNE_LAYERS = 15   # number of EfficientNetB0 layers to unfreeze in Phase 2
+FINETUNE_LAYERS = 30   # number of EfficientNetB0 layers to unfreeze in Phase 2
 
 
 @keras.saving.register_keras_serializable(package="TransferEmotionCNN")
@@ -124,7 +124,7 @@ class TransferEmotionModel:
             kernel_regularizer=regularizers.l2(L2),
             name="dense_256",
         )(x)
-        x = layers.Dropout(0.6, name="dropout")(x)
+        x = layers.Dropout(0.5, name="dropout")(x)
         outputs = layers.Dense(NUM_CLASSES, activation="softmax", name="predictions")(x)
 
         model = Model(inputs=inputs, outputs=outputs, name="TransferEmotionCNN")
