@@ -16,10 +16,27 @@ Regularization stack:
 """
 
 import tensorflow as tf
+import keras
 from keras import layers, regularizers, Model, Input
 from config import IMG_SIZE, NUM_CLASSES, LEARNING_RATE, FOCAL_GAMMA
 
 L2 = 1e-4
+
+
+@keras.saving.register_keras_serializable(package="EmotionCNN")
+def focal_loss(y_true, y_pred):
+    """
+    Focal loss (Lin et al., 2017): FL(p_t) = -(1 - p_t)^γ · log(p_t)
+
+    Down-weights easy examples where the model is already confident,
+    forcing it to focus training signal on hard/misclassified samples
+    (fearful, sad, surprised). γ=2 is the standard default.
+    """
+    n_classes = tf.shape(y_pred)[-1]
+    y_true_oh = tf.one_hot(tf.cast(y_true, tf.int32), n_classes)
+    p_t       = tf.reduce_sum(y_true_oh * y_pred, axis=-1)
+    p_t       = tf.clip_by_value(p_t, 1e-7, 1.0 - 1e-7)
+    return tf.reduce_mean(-tf.pow(1.0 - p_t, FOCAL_GAMMA) * tf.math.log(p_t))
 
 
 class CNNBlock:
@@ -68,29 +85,10 @@ class EmotionCNN:
         model = Model(inputs=inputs, outputs=outputs, name="EmotionCNN")
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
-            loss=self._focal_loss,
+            loss=focal_loss,
             metrics=["accuracy"],
         )
         return model
-
-    @staticmethod
-    def _focal_loss(y_true, y_pred):
-        """
-        Focal loss (Lin et al., 2017): FL(p_t) = -(1 - p_t)^γ · log(p_t)
-
-        Down-weights easy examples where the model is already confident,
-        forcing it to focus training signal on hard/misclassified samples
-        (fearful, sad, surprised). γ=2 is the standard default.
-
-        Compared to cross-entropy, this makes losses from confused samples
-        like fearful (21% recall baseline) matter proportionally more than
-        losses from well-learned samples like angry (95% recall baseline).
-        """
-        n_classes = tf.shape(y_pred)[-1]
-        y_true_oh = tf.one_hot(tf.cast(y_true, tf.int32), n_classes)
-        p_t       = tf.reduce_sum(y_true_oh * y_pred, axis=-1)
-        p_t       = tf.clip_by_value(p_t, 1e-7, 1.0 - 1e-7)
-        return tf.reduce_mean(-tf.pow(1.0 - p_t, FOCAL_GAMMA) * tf.math.log(p_t))
 
     def summary(self):
         model = self.build_model()
