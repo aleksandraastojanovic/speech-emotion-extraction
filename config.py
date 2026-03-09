@@ -54,3 +54,22 @@ NOISE_STD          = 0.005
 SPEC_AUG_FREQ_MASK  = 20   # max mel bins to zero per frequency mask
 SPEC_AUG_TIME_MASK  = 20   # max time frames to zero per time mask
 SPEC_AUG_NUM_MASKS  = 2    # number of masks of each type applied per sample
+
+# ── Speaker-independent split ──────────────────────────────────────────────
+VAL_ACTORS   = [21, 22]   # held-out actors for validation
+TEST_ACTORS  = [23, 24]   # held-out actors for test
+# Train: all remaining actors (1-20)
+
+# ── Focal loss ────────────────────────────────────────────────────────────
+FOCAL_GAMMA  = 2.0   # focusing parameter — higher = more attention on hard examples
+
+# ── Per-class extra augmentation ──────────────────────────────────────────
+# Default for unlisted classes: 1 plain + 1 aug = 2× total
+# Hard classes get extra aug passes to counteract low recall
+AUG_EXTRA = {
+    "fearful":   2,   # 1 plain + 2 aug = 3×  (21% recall in baseline)
+    "sad":       2,   # 1 plain + 2 aug = 3×  (16% recall in baseline)
+    "surprised": 2,   # 1 plain + 2 aug = 3×  (30% recall in baseline)
+    "happy":     2,   # 1 plain + 2 aug = 3×  (37% recall in baseline)
+    "neutral":   3,   # 1 plain + 3 aug = 4×  (minority class, 96 samples)
+}

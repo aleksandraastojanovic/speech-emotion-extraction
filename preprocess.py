@@ -31,7 +31,6 @@ import pandas as pd
 import librosa
 import cv2
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 import config
@@ -267,37 +266,29 @@ class SpectrogramDataset:
     # ── private — pipeline ───────────────────────────────────────────────────
     def _run_pipeline(self):
         # 1. Encode labels
-        y_all = self.label_encoder.fit_transform(self.df["emotion_name"])
+        y_all         = self.label_encoder.fit_transform(self.df["emotion_name"])
+        emotion_names = self.df["emotion_name"].values
+        paths         = self.df["path"].values
+        actors        = self.df["actor"].values
         np.save(
             os.path.join(config.PROCESSED_DIR, "label_encoder_classes.npy"),
             self.label_encoder.classes_,
         )
 
-        # 2. Stratified split (before any augmentation)
-        paths  = self.df["path"].values
-        X_idx  = np.arange(len(paths))
-
-        idx_trainval, idx_test = train_test_split(
-            X_idx, test_size=config.TEST_SIZE,
-            stratify=y_all, random_state=config.RANDOM_SEED,
-        )
-        val_fraction = config.VAL_SIZE / (1.0 - config.TEST_SIZE)
-        idx_train, idx_val = train_test_split(
-            idx_trainval,
-            test_size=val_fraction,
-            stratify=y_all[idx_trainval],
-            random_state=config.RANDOM_SEED,
-        )
+        # 2. Speaker-independent split — entire actors held out for val/test.
+        #    Prevents the model from learning actor-specific voice characteristics
+        #    instead of emotion. VAL_ACTORS and TEST_ACTORS set in config.py.
+        test_mask  = np.isin(actors, config.TEST_ACTORS)
+        val_mask   = np.isin(actors, config.VAL_ACTORS)
+        train_mask = ~test_mask & ~val_mask
 
         # 3. Process splits
-        X_val,  y_val  = self._process_split(paths[idx_val],   y_all[idx_val],
+        X_val,  y_val  = self._process_split(paths[val_mask],  y_all[val_mask],
                                               augment=False, label="val")
-        X_test, y_test = self._process_split(paths[idx_test],  y_all[idx_test],
-                                             augment=False, label="test")
-
-        # Training: plain + augmented (neutral gets augmented twice)
+        X_test, y_test = self._process_split(paths[test_mask], y_all[test_mask],
+                                              augment=False, label="test")
         X_train, y_train = self._process_train_split(
-            paths[idx_train], y_all[idx_train]
+            paths[train_mask], y_all[train_mask], emotion_names[train_mask]
         )
 
         return X_train, y_train, X_val, y_val, X_test, y_test
@@ -312,28 +303,35 @@ class SpectrogramDataset:
             y.append(lbl)
         return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32)
 
-    def _process_train_split(self, paths, labels):
+    def _process_train_split(self, paths, labels, emotion_names):
         """
-        Training split processing:
-          1. Plain copy of every sample
-          2. One augmented copy of every sample
+        Per-class augmentation weighting.
 
-        Class imbalance (neutral) is handled exclusively via class weights
-        during training — NOT by over-augmenting the minority class here.
+        Default (angry, calm, disgust): 1 plain + 1 aug = 2× total
+        Hard classes (fearful, sad, surprised, happy): 1 plain + 2 aug = 3×
+        Minority class (neutral): 1 plain + 3 aug = 4×
+
+        Multipliers defined in config.AUG_EXTRA. Hard classes had the lowest
+        recall in the baseline run; extra copies give the model more signal
+        on those categories without touching the val/test splits.
         """
         X, y = [], []
 
-        # Pass 1 — plain
+        # Pass 1 — plain (all classes)
         for path, lbl in tqdm(zip(paths, labels),
                                total=len(paths), desc="  train (plain) "):
             X.append(self._plain_proc.process(path))
             y.append(lbl)
 
-        # Pass 2 — augmented (all classes equally)
-        for path, lbl in tqdm(zip(paths, labels),
-                               total=len(paths), desc="  train (aug×1) "):
-            X.append(self._aug_proc.process(path))
-            y.append(lbl)
+        # Passes 2..max_aug — only for classes that need that many copies
+        max_aug = max(config.AUG_EXTRA.values())
+        for aug_idx in range(1, max_aug + 1):
+            desc = f"  train (aug×{aug_idx})"
+            for path, lbl, ename in tqdm(zip(paths, labels, emotion_names),
+                                          total=len(paths), desc=desc):
+                if aug_idx <= config.AUG_EXTRA.get(ename, 1):
+                    X.append(self._aug_proc.process(path))
+                    y.append(lbl)
 
         X_arr = np.array(X, dtype=np.float32)
         y_arr = np.array(y, dtype=np.int32)
