@@ -85,6 +85,9 @@ class AudioPreprocessor:
         mel_resized = self._resize(mel_db)
         mel_norm = self._normalize(mel_resized)
 
+        if self.augment:
+            mel_norm = self._spec_augment(mel_norm)
+
         return mel_norm[..., np.newaxis].astype(np.float32)  # (H, W, 1)
 
     # ── private — loading ────────────────────────────────────────────────────
@@ -140,6 +143,38 @@ class AudioPreprocessor:
             y = y + noise
 
         return y.astype(np.float32)
+
+    # ── private — SpecAugment ────────────────────────────────────────────────
+    @staticmethod
+    def _spec_augment(img: np.ndarray) -> np.ndarray:
+        """
+        SpecAugment: mask random frequency bands and time strips.
+
+        Applied AFTER Z-score normalization so masked values (0) equal the
+        approximate mean, avoiding any distributional shift from masking.
+
+        Frequency masking: zero out up to SPEC_AUG_FREQ_MASK consecutive
+        mel bins, repeated SPEC_AUG_NUM_MASKS times. Forces the model to
+        recognise emotions without relying on any specific frequency region.
+
+        Time masking: zero out up to SPEC_AUG_TIME_MASK consecutive time
+        frames, repeated SPEC_AUG_NUM_MASKS times. Forces temporal robustness.
+        """
+        img = img.copy()
+        H, W = img.shape  # (128, 128)
+
+        for _ in range(config.SPEC_AUG_NUM_MASKS):
+            # Frequency mask
+            f = random.randint(0, config.SPEC_AUG_FREQ_MASK)
+            f0 = random.randint(0, H - f)
+            img[f0:f0 + f, :] = 0.0
+
+            # Time mask
+            t = random.randint(0, config.SPEC_AUG_TIME_MASK)
+            t0 = random.randint(0, W - t)
+            img[:, t0:t0 + t] = 0.0
+
+        return img
 
     # ── private — spectrogram ────────────────────────────────────────────────
     @staticmethod

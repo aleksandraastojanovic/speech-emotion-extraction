@@ -38,7 +38,7 @@ NUM_CLASSES = len(EMOTION_MAP)   # 8
 
 # ── Training ───────────────────────────────────────────────────────────────
 TEST_SIZE      = 0.10   # 10 % test
-VAL_SIZE       = 0.10   # 10 % validation  (taken from remaining 90 %)
+VAL_SIZE       = 0.15   # 15 % validation  (taken from remaining 90 %)
 RANDOM_SEED    = 42
 BATCH_SIZE     = 32
 EPOCHS         = 60
@@ -49,3 +49,8 @@ AUG_PROB       = 0.50   # probability of applying each augmentation
 TIME_STRETCH_RANGE = (0.85, 1.15)
 PITCH_SHIFT_RANGE  = (-2, 2)     # semitones
 NOISE_STD          = 0.005
+
+# ── SpecAugment ────────────────────────────────────────────────────────────
+SPEC_AUG_FREQ_MASK  = 20   # max mel bins to zero per frequency mask
+SPEC_AUG_TIME_MASK  = 20   # max time frames to zero per time mask
+SPEC_AUG_NUM_MASKS  = 2    # number of masks of each type applied per sample
