@@ -31,6 +31,7 @@ import pandas as pd
 import librosa
 import cv2
 from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 import config
@@ -269,26 +270,30 @@ class SpectrogramDataset:
         y_all         = self.label_encoder.fit_transform(self.df["emotion_name"])
         emotion_names = self.df["emotion_name"].values
         paths         = self.df["path"].values
-        actors        = self.df["actor"].values
         np.save(
             os.path.join(config.PROCESSED_DIR, "label_encoder_classes.npy"),
             self.label_encoder.classes_,
         )
 
-        # 2. Speaker-independent split — entire actors held out for val/test.
-        #    Prevents the model from learning actor-specific voice characteristics
-        #    instead of emotion. VAL_ACTORS and TEST_ACTORS set in config.py.
-        test_mask  = np.isin(actors, config.TEST_ACTORS)
-        val_mask   = np.isin(actors, config.VAL_ACTORS)
-        train_mask = ~test_mask & ~val_mask
+        # 2. Stratified random split (speaker-dependent)
+        X_idx = np.arange(len(paths))
+        idx_trainval, idx_test = train_test_split(
+            X_idx, test_size=config.TEST_SIZE,
+            stratify=y_all, random_state=config.RANDOM_SEED,
+        )
+        val_fraction = config.VAL_SIZE / (1.0 - config.TEST_SIZE)
+        idx_train, idx_val = train_test_split(
+            idx_trainval, test_size=val_fraction,
+            stratify=y_all[idx_trainval], random_state=config.RANDOM_SEED,
+        )
 
         # 3. Process splits
-        X_val,  y_val  = self._process_split(paths[val_mask],  y_all[val_mask],
+        X_val,  y_val  = self._process_split(paths[idx_val],  y_all[idx_val],
                                               augment=False, label="val")
-        X_test, y_test = self._process_split(paths[test_mask], y_all[test_mask],
+        X_test, y_test = self._process_split(paths[idx_test], y_all[idx_test],
                                               augment=False, label="test")
         X_train, y_train = self._process_train_split(
-            paths[train_mask], y_all[train_mask], emotion_names[train_mask]
+            paths[idx_train], y_all[idx_train], emotion_names[idx_train]
         )
 
         return X_train, y_train, X_val, y_val, X_test, y_test

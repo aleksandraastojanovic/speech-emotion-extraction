@@ -2,25 +2,35 @@
 main.py — Full pipeline entry point for RAVDESS emotion CNN.
 
 Usage:
-    python main.py                    # full pipeline
-    python main.py --skip-preprocess  # use cached processed/ .npy files
-    python main.py --eval-only        # skip training, evaluate saved model
+    python main.py                              # CNN from scratch (default)
+    python main.py --mode transfer              # EfficientNetB0 transfer learning
+    python main.py --skip-preprocess            # use cached processed/ .npy files
+    python main.py --eval-only                  # skip training, evaluate saved model
+    python main.py --mode transfer --eval-only  # evaluate saved transfer model
 """
 
 import argparse
 import tensorflow as tf
 
-from config import MODEL_PATH
+from config import MODEL_PATH, MODEL_TRANSFER_PATH
 from data_loader import DataLoader
 from preprocess import SpectrogramDataset
 from model import EmotionCNN
 from train import Trainer
+from model_transfer import TransferEmotionModel
+from train_transfer import TransferTrainer
 from evaluate import Evaluator
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="RAVDESS Speech Emotion Recognition — CNN Pipeline"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["cnn", "transfer"],
+        default="cnn",
+        help="cnn = train from scratch (default) | transfer = EfficientNetB0 fine-tuning",
     )
     parser.add_argument(
         "--skip-preprocess",
@@ -30,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval-only",
         action="store_true",
-        help="Skip training and evaluate the saved model_best.keras directly",
+        help="Skip training and evaluate the saved model directly",
     )
     return parser.parse_args()
 
@@ -54,18 +64,32 @@ def main() -> None:
     print(f"  Classes: {list(class_names)}")
 
     # ── 3. Training ───────────────────────────────────────────────────
-    print("\n=== [3/4] Training ===")
-    if args.eval_only:
-        print("  --eval-only set: loading saved model, skipping training.")
-        model = tf.keras.models.load_model(MODEL_PATH)
-    else:
-        model   = EmotionCNN().build_model()
-        trainer = Trainer(model, X_train, y_train, X_val, y_val)
-        history = trainer.train()
-        trainer.plot_history(history)
-        # Always load best weights saved by ModelCheckpoint
-        model = tf.keras.models.load_model(MODEL_PATH)
-        print("  Best model reloaded from disk.")
+    print(f"\n=== [3/4] Training  (mode: {args.mode}) ===")
+
+    if args.mode == "cnn":
+        model_path = MODEL_PATH
+        if args.eval_only:
+            print("  --eval-only set: loading saved CNN model, skipping training.")
+            model = tf.keras.models.load_model(model_path)
+        else:
+            model   = EmotionCNN().build_model()
+            trainer = Trainer(model, X_train, y_train, X_val, y_val)
+            history = trainer.train()
+            trainer.plot_history(history)
+            model = tf.keras.models.load_model(model_path)
+            print("  Best CNN model reloaded from disk.")
+
+    else:  # transfer
+        model_path = MODEL_TRANSFER_PATH
+        if args.eval_only:
+            print("  --eval-only set: loading saved transfer model, skipping training.")
+            model = tf.keras.models.load_model(model_path)
+        else:
+            trainer = TransferTrainer(X_train, y_train, X_val, y_val)
+            h1, h2  = trainer.train()
+            trainer.plot_history(h1, h2)
+            model = tf.keras.models.load_model(model_path)
+            print("  Best transfer model reloaded from disk.")
 
     # ── 4. Evaluation ─────────────────────────────────────────────────
     print("\n=== [4/4] Evaluation ===")

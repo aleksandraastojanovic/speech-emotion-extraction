@@ -10,7 +10,8 @@ BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR       = os.path.join(BASE_DIR, "data", "ravdess", "Actor_*")
 PROCESSED_DIR  = os.path.join(BASE_DIR, "processed")
 RESULTS_DIR    = os.path.join(BASE_DIR, "results")
-MODEL_PATH     = os.path.join(BASE_DIR, "model_best.keras")
+MODEL_PATH          = os.path.join(BASE_DIR, "model_best.keras")
+MODEL_TRANSFER_PATH = os.path.join(BASE_DIR, "model_transfer_best.keras")
 
 os.makedirs(PROCESSED_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR,   exist_ok=True)
@@ -43,6 +44,12 @@ RANDOM_SEED    = 42
 BATCH_SIZE     = 32
 EPOCHS                = 60
 LEARNING_RATE         = 1e-3
+
+# ── Transfer learning ──────────────────────────────────────────────────────
+PHASE1_EPOCHS  = 30   # frozen base: train only the new head
+PHASE2_EPOCHS  = 40   # unfreeze top layers: fine-tune end-to-end
+TRANSFER_LR    = 1e-3  # Phase 1 learning rate
+FINETUNE_LR    = 1e-4  # Phase 2 learning rate (10× smaller)
 EARLY_STOPPING_PATIENCE  = 20   # increased from 10 — val set is noisy (120 samples)
 REDUCE_LR_PATIENCE       = 10   # increased from 5
 
