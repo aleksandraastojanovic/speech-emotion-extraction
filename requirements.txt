@@ -1,0 +1,10 @@
+tensorflow>=2.12
+librosa>=0.10
+numpy
+pandas
+matplotlib
+seaborn
+scikit-learn
+soundfile
+opencv-python
+tqdm
