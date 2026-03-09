@@ -41,8 +41,10 @@ TEST_SIZE      = 0.10   # 10 % test
 VAL_SIZE       = 0.15   # 15 % validation  (taken from remaining 90 %)
 RANDOM_SEED    = 42
 BATCH_SIZE     = 32
-EPOCHS         = 60
-LEARNING_RATE  = 1e-3
+EPOCHS                = 60
+LEARNING_RATE         = 1e-3
+EARLY_STOPPING_PATIENCE  = 20   # increased from 10 — val set is noisy (120 samples)
+REDUCE_LR_PATIENCE       = 10   # increased from 5
 
 # ── Augmentation ──────────────────────────────────────────────────────────
 AUG_PROB       = 0.50   # probability of applying each augmentation

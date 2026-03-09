@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from sklearn.utils.class_weight import compute_class_weight
 
-from config import BATCH_SIZE, EPOCHS, MODEL_PATH, RESULTS_DIR
+from config import BATCH_SIZE, EPOCHS, MODEL_PATH, RESULTS_DIR, EARLY_STOPPING_PATIENCE, REDUCE_LR_PATIENCE
 
 
 class Trainer:
@@ -35,13 +35,14 @@ class Trainer:
 
     # ------------------------------------------------------------------
     def train(self) -> tf.keras.callbacks.History:
-        class_weight = self.compute_class_weights()
-        print(f"[Trainer] class weights: {class_weight}")
-
+        # No class_weight — per-class augmentation in preprocess.py already
+        # balances the training distribution. Using class_weight on top would
+        # down-weight the hard classes (fearful, sad) that we intentionally
+        # over-sampled, directly cancelling the augmentation strategy.
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss",
-                patience=10,
+                patience=EARLY_STOPPING_PATIENCE,
                 restore_best_weights=True,
                 verbose=1,
             ),
@@ -54,7 +55,7 @@ class Trainer:
             tf.keras.callbacks.ReduceLROnPlateau(
                 monitor="val_loss",
                 factor=0.5,
-                patience=5,
+                patience=REDUCE_LR_PATIENCE,
                 min_lr=1e-6,
                 verbose=1,
             ),
@@ -65,7 +66,6 @@ class Trainer:
             validation_data=(self.X_val, self.y_val),
             epochs=EPOCHS,
             batch_size=BATCH_SIZE,
-            class_weight=class_weight,
             callbacks=callbacks,
             shuffle=True,
         )
