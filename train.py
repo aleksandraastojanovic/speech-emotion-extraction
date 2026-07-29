@@ -67,7 +67,7 @@ class Trainer:
     def plot_history(self, history: tf.keras.callbacks.History) -> None:
         hist      = history.history
         epochs    = range(1, len(hist["loss"]) + 1)
-        best_ep   = int(np.argmin(hist["val_loss"])) + 1   # 1-indexed
+        best_ep   = int(np.argmax(hist["val_accuracy"])) + 1   # matches checkpoint
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 

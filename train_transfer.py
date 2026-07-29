@@ -133,7 +133,7 @@ class TransferTrainer:
         total_epochs = len(acc)
         epochs       = range(1, total_epochs + 1)
         phase_split  = len(h1.history.get("loss", []))
-        best_ep      = int(np.argmin(val_loss)) + 1   # 1-indexed
+        best_ep      = int(np.argmax(val_acc)) + 1   # matches checkpoint
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4))
 
