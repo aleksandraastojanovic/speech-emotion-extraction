@@ -138,7 +138,7 @@ class DataVisualizer:
         if save_path:
             fig.savefig(save_path, dpi=150)
             print(f"[DataVisualizer] Distribution plot saved → {save_path}")
-        plt.show()
+        plt.close(fig)
 
     def plot_sample_spectrograms(self, save_path: str | None = None):
         """
@@ -173,7 +173,7 @@ class DataVisualizer:
         if save_path:
             fig.savefig(save_path, dpi=150)
             print(f"[DataVisualizer] Spectrogram grid saved → {save_path}")
-        plt.show()
+        plt.close(fig)
 
     # ── private ─────────────────────────────────────────────────────────────
     @staticmethod

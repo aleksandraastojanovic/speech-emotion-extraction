@@ -2,7 +2,7 @@
 model.py — CNN architecture for RAVDESS emotion classification.
 
 Architecture:
-    Input (128, 128, 1)
+    Input (128, 128, 3)  — mel + delta + delta-delta channels
     → CNNBlock(32)  → CNNBlock(64)
     → CNNBlock(128, dropout=0.3) → CNNBlock(256, dropout=0.3)
     → GlobalAveragePooling2D
@@ -18,7 +18,7 @@ Regularization stack:
 import tensorflow as tf
 import keras
 from keras import layers, regularizers, Model, Input
-from config import IMG_SIZE, NUM_CLASSES, LEARNING_RATE, FOCAL_GAMMA
+from config import IMG_SIZE, N_CHANNELS, NUM_CLASSES, LEARNING_RATE, FOCAL_GAMMA
 
 L2 = 1e-4
 
@@ -65,7 +65,7 @@ class EmotionCNN:
     
 
     def build_model(self) -> Model:
-        inputs = Input(shape=(*IMG_SIZE, 1), name="mel_spectrogram")
+        inputs = Input(shape=(*IMG_SIZE, N_CHANNELS), name="mel_spectrogram")
 
         x = CNNBlock(32).build(inputs)              # → (64, 64, 32)
         x = CNNBlock(64).build(x)                  # → (32, 32, 64)

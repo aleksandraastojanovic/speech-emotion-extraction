@@ -5,13 +5,14 @@ preprocess.py — Step 2: Audio Preprocessing & Dataset Construction
 Classes
 -------
 AudioPreprocessor
-    Converts a single .wav file into a normalized 128×128 mel-spectrogram.
+    Converts a single .wav file into a normalized 128×128×3 image
+    (mel-spectrogram + delta + delta-delta channels).
     Optionally applies waveform-level augmentation before conversion.
 
 SpectrogramDataset
     Orchestrates the full pipeline across all files:
-      - Calls AudioPreprocessor for every sample
-      - Applies augmentation strategy (all train + extra for neutral)
+      - Calls AudioPreprocessor for every sample (in parallel via joblib)
+      - Applies augmentation strategy (class-balanced oversampling)
       - Stratified train / val / test split
       - Saves / loads pre-computed .npy arrays to avoid re-running librosa
 
@@ -24,12 +25,12 @@ always yields a valid audio signal.
 """
 
 import os
-import glob
 import random
 import numpy as np
 import pandas as pd
 import librosa
 import cv2
+from joblib import Parallel, delayed
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -40,18 +41,22 @@ import config
 # ─────────────────────────────────────────────────────────────────────────────
 class AudioPreprocessor:
     """
-    Converts one .wav file → normalized (128, 128, 1) numpy array.
+    Converts one .wav file → normalized (128, 128, 3) numpy array.
 
     Pipeline per file
     -----------------
-    1. Load waveform at fixed sample rate
-    2. Crop or zero-pad to exactly DURATION seconds
-    3. [Optional] Apply waveform augmentation
-    4. Compute mel-spectrogram (N_MELS × time_frames)
-    5. Convert power → dB scale
-    6. Resize to IMG_SIZE with bilinear interpolation
-    7. Per-sample Z-score normalization
-    8. Add channel dim → (H, W, 1)
+    1. Load full waveform at fixed sample rate
+    2. Trim leading/trailing silence (RAVDESS clips start with ~0.5 s
+       of silence — without trimming, a quarter of the 3 s window is
+       wasted and the end of the utterance is often cut off)
+    3. Crop or zero-pad to exactly DURATION seconds
+    4. [Optional] Apply waveform augmentation
+    5. Compute mel-spectrogram (N_MELS × time_frames), convert to dB
+    6. Add delta and delta-delta channels (velocity/acceleration of the
+       spectral envelope over time — standard SER features that capture
+       the *dynamics* of speech, which a static spectrogram misses)
+    7. Resize each channel to IMG_SIZE, Z-score each independently
+    8. Stack → (H, W, 3)
 
     Why per-sample Z-score?
     -----------------------
@@ -59,8 +64,6 @@ class AudioPreprocessor:
     spectrogram independently centres and scales it so every sample enters
     the network on equal footing, regardless of recording volume. This
     prevents the network from using absolute loudness as a shortcut.
-    It also mirrors what BatchNorm does inside the network, giving it a
-    clean, well-conditioned input distribution.
     """
 
     def __init__(self, augment: bool = False):
@@ -74,27 +77,38 @@ class AudioPreprocessor:
         self.augment = augment
 
     # ── public ──────────────────────────────────────────────────────────────
-    def process(self, path: str) -> np.ndarray:
-        """Load a .wav file and return a (128, 128, 1) float32 array."""
+    def process(self, path: str, seed: int | None = None) -> np.ndarray:
+        """Load a .wav file and return a (128, 128, 3) float32 array.
+
+        `seed` makes augmentation deterministic per sample, so the exact
+        training set can be regenerated (also safe under parallel workers).
+        """
+        rng = random.Random(seed)
         y = self._load_and_pad(path)
 
         if self.augment:
-            y = self._augment_waveform(y)
+            y = self._augment_waveform(y, rng)
 
         mel_db = self._waveform_to_mel(y)
-        mel_resized = self._resize(mel_db)
-        mel_norm = self._normalize(mel_resized)
+        # Delta (velocity) and delta-delta (acceleration) along time
+        d1 = librosa.feature.delta(mel_db)
+        d2 = librosa.feature.delta(mel_db, order=2)
+
+        img = np.stack(
+            [self._normalize(self._resize(c)) for c in (mel_db, d1, d2)],
+            axis=-1,
+        )
 
         if self.augment:
-            mel_norm = self._spec_augment(mel_norm)
+            img = self._spec_augment(img, rng)
 
-        return mel_norm[..., np.newaxis].astype(np.float32)  # (H, W, 1)
+        return img.astype(np.float32)  # (H, W, 3)
 
     # ── private — loading ────────────────────────────────────────────────────
     def _load_and_pad(self, path: str) -> np.ndarray:
-        """Load waveform; crop if too long, zero-pad if too short."""
-        y, _ = librosa.load(path, sr=config.SAMPLE_RATE,
-                            duration=config.DURATION)
+        """Load waveform, trim silence; crop if too long, zero-pad if short."""
+        y, _ = librosa.load(path, sr=config.SAMPLE_RATE)
+        y, _ = librosa.effects.trim(y, top_db=config.TRIM_DB)
         target = int(config.SAMPLE_RATE * config.DURATION)
         if len(y) < target:
             y = np.pad(y, (0, target - len(y)))
@@ -103,7 +117,7 @@ class AudioPreprocessor:
         return y
 
     # ── private — augmentation ───────────────────────────────────────────────
-    def _augment_waveform(self, y: np.ndarray) -> np.ndarray:
+    def _augment_waveform(self, y: np.ndarray, rng: random.Random) -> np.ndarray:
         """
         Three independent augmentations, each applied with probability AUG_PROB.
 
@@ -121,8 +135,8 @@ class AudioPreprocessor:
             and prevents the network from relying on pure silence regions.
         """
         # Time stretch
-        if random.random() < config.AUG_PROB:
-            rate = random.uniform(*config.TIME_STRETCH_RANGE)
+        if rng.random() < config.AUG_PROB:
+            rate = rng.uniform(*config.TIME_STRETCH_RANGE)
             y = librosa.effects.time_stretch(y, rate=rate)
             # Re-pad/crop after stretch since length changes
             target = int(config.SAMPLE_RATE * config.DURATION)
@@ -132,26 +146,28 @@ class AudioPreprocessor:
                 y = y[:target]
 
         # Pitch shift
-        if random.random() < config.AUG_PROB:
-            steps = random.uniform(*config.PITCH_SHIFT_RANGE)
+        if rng.random() < config.AUG_PROB:
+            steps = rng.uniform(*config.PITCH_SHIFT_RANGE)
             y = librosa.effects.pitch_shift(
                 y, sr=config.SAMPLE_RATE, n_steps=steps)
 
         # Gaussian noise
-        if random.random() < config.AUG_PROB:
-            noise = np.random.normal(0, config.NOISE_STD, len(y))
+        if rng.random() < config.AUG_PROB:
+            noise = np.random.default_rng(rng.randrange(2**32)).normal(
+                0, config.NOISE_STD, len(y))
             y = y + noise
 
         return y.astype(np.float32)
 
     # ── private — SpecAugment ────────────────────────────────────────────────
     @staticmethod
-    def _spec_augment(img: np.ndarray) -> np.ndarray:
+    def _spec_augment(img: np.ndarray, rng: random.Random) -> np.ndarray:
         """
         SpecAugment: mask random frequency bands and time strips.
 
         Applied AFTER Z-score normalization so masked values (0) equal the
         approximate mean, avoiding any distributional shift from masking.
+        Masks span all channels so mel/delta stay aligned.
 
         Frequency masking: zero out up to SPEC_AUG_FREQ_MASK consecutive
         mel bins, repeated SPEC_AUG_NUM_MASKS times. Forces the model to
@@ -161,18 +177,18 @@ class AudioPreprocessor:
         frames, repeated SPEC_AUG_NUM_MASKS times. Forces temporal robustness.
         """
         img = img.copy()
-        H, W = img.shape  # (128, 128)
+        H, W = img.shape[:2]  # (128, 128)
 
         for _ in range(config.SPEC_AUG_NUM_MASKS):
             # Frequency mask
-            f = random.randint(0, config.SPEC_AUG_FREQ_MASK)
-            f0 = random.randint(0, H - f)
-            img[f0:f0 + f, :] = 0.0
+            f = rng.randint(0, config.SPEC_AUG_FREQ_MASK)
+            f0 = rng.randint(0, H - f)
+            img[f0:f0 + f, :, :] = 0.0
 
             # Time mask
-            t = random.randint(0, config.SPEC_AUG_TIME_MASK)
-            t0 = random.randint(0, W - t)
-            img[:, t0:t0 + t] = 0.0
+            t = rng.randint(0, config.SPEC_AUG_TIME_MASK)
+            t0 = rng.randint(0, W - t)
+            img[:, t0:t0 + t, :] = 0.0
 
         return img
 
@@ -216,9 +232,9 @@ class SpectrogramDataset:
 
     Augmentation strategy
     ---------------------
-    - Every training sample is augmented once → 2× training set size.
-    - Class imbalance (neutral) is handled via class weights at training
-      time, NOT by extra augmentation here.
+    - Every training sample gets AUG_EXTRA augmented copies; neutral
+      (the minority class) gets double, so the final training set is
+      exactly class-balanced.
     - Validation and test sets are NEVER augmented (they must reflect
       real-world distribution).
 
@@ -289,57 +305,47 @@ class SpectrogramDataset:
 
         # 3. Process splits
         X_val,  y_val  = self._process_split(paths[idx_val],  y_all[idx_val],
-                                              augment=False, label="val")
+                                              label="val")
         X_test, y_test = self._process_split(paths[idx_test], y_all[idx_test],
-                                              augment=False, label="test")
+                                              label="test")
         X_train, y_train = self._process_train_split(
             paths[idx_train], y_all[idx_train], emotion_names[idx_train]
         )
 
         return X_train, y_train, X_val, y_val, X_test, y_test
 
-    def _process_split(self, paths, labels, augment: bool, label: str):
-        """Process a list of paths without augmentation."""
-        proc = self._aug_proc if augment else self._plain_proc
-        X, y = [], []
-        for path, lbl in tqdm(zip(paths, labels),
-                               total=len(paths), desc=f"  {label:>5s} (plain)"):
-            X.append(proc.process(path))
-            y.append(lbl)
-        return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32)
+    def _process_split(self, paths, labels, label: str):
+        """Process a list of paths without augmentation (parallel)."""
+        X = Parallel(n_jobs=-1)(
+            delayed(self._plain_proc.process)(path)
+            for path in tqdm(paths, desc=f"  {label:>5s} (plain)")
+        )
+        return np.array(X, dtype=np.float32), np.array(labels, dtype=np.int32)
 
     def _process_train_split(self, paths, labels, emotion_names):
         """
-        Per-class augmentation weighting.
+        Class-balanced augmentation (see config.AUG_EXTRA):
+        every file gets 1 plain + AUG_EXTRA augmented copies; neutral gets
+        double the copies so all 8 classes end up with the same count.
 
-        Default (angry, calm, disgust): 1 plain + 1 aug = 2× total
-        Hard classes (fearful, sad, surprised, happy): 1 plain + 2 aug = 3×
-        Minority class (neutral): 1 plain + 3 aug = 4×
-
-        Multipliers defined in config.AUG_EXTRA. Hard classes had the lowest
-        recall in the baseline run; extra copies give the model more signal
-        on those categories without touching the val/test splits.
+        Each augmented copy has a deterministic seed (RANDOM_SEED + job
+        index), so the exact training set is reproducible even though
+        processing runs on all cores.
         """
-        X, y = [], []
+        # Build one job per (path, label, seed) — plain copies use seed None
+        jobs = [(p, l, None) for p, l in zip(paths, labels)]
+        for i, (path, lbl, ename) in enumerate(zip(paths, labels, emotion_names)):
+            n_aug = config.AUG_EXTRA.get(ename, config.AUG_EXTRA_DEFAULT)
+            for k in range(n_aug):
+                jobs.append((path, lbl, config.RANDOM_SEED + i * 100 + k))
 
-        # Pass 1 — plain (all classes)
-        for path, lbl in tqdm(zip(paths, labels),
-                               total=len(paths), desc="  train (plain) "):
-            X.append(self._plain_proc.process(path))
-            y.append(lbl)
-
-        # Passes 2..max_aug — only for classes that need that many copies
-        max_aug = max(config.AUG_EXTRA.values())
-        for aug_idx in range(1, max_aug + 1):
-            desc = f"  train (aug×{aug_idx})"
-            for path, lbl, ename in tqdm(zip(paths, labels, emotion_names),
-                                          total=len(paths), desc=desc):
-                if aug_idx <= config.AUG_EXTRA.get(ename, 1):
-                    X.append(self._aug_proc.process(path))
-                    y.append(lbl)
-
+        X = Parallel(n_jobs=-1)(
+            delayed(self._aug_proc.process if seed is not None
+                    else self._plain_proc.process)(path, seed)
+            for path, _, seed in tqdm(jobs, desc="  train (plain+aug)")
+        )
         X_arr = np.array(X, dtype=np.float32)
-        y_arr = np.array(y, dtype=np.int32)
+        y_arr = np.array([lbl for _, lbl, _ in jobs], dtype=np.int32)
 
         # Shuffle so augmented copies are not contiguous
         shuffle_idx = np.random.RandomState(config.RANDOM_SEED).permutation(len(X_arr))

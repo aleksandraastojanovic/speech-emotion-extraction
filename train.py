@@ -8,7 +8,6 @@ Handles class weights, callbacks, and history plotting.
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from sklearn.utils.class_weight import compute_class_weight
 
 from config import BATCH_SIZE, EPOCHS, MODEL_PATH, RESULTS_DIR, EARLY_STOPPING_PATIENCE, REDUCE_LR_PATIENCE
 
@@ -24,21 +23,9 @@ class Trainer:
         self.y_val   = y_val
 
     # ------------------------------------------------------------------
-    def compute_class_weights(self) -> dict[int, float]:
-        classes = np.unique(self.y_train)
-        weights = compute_class_weight(
-            class_weight="balanced",
-            classes=classes,
-            y=self.y_train,
-        )
-        return dict(zip(classes.tolist(), weights.tolist()))
-
-    # ------------------------------------------------------------------
     def train(self) -> tf.keras.callbacks.History:
         # No class_weight — per-class augmentation in preprocess.py already
-        # balances the training distribution. Using class_weight on top would
-        # down-weight the hard classes (fearful, sad) that we intentionally
-        # over-sampled, directly cancelling the augmentation strategy.
+        # balances the training distribution exactly.
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss",

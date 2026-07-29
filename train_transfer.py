@@ -56,11 +56,14 @@ class TransferTrainer:
         model   = builder.build_model()
 
         print("\n[TransferTrainer] ── Phase 1: training head (base frozen) ──")
-        h1 = self._fit(model, PHASE1_EPOCHS, phase=1)
+        h1 = self._fit(model, PHASE1_EPOCHS)
 
         print("\n[TransferTrainer] ── Phase 2: fine-tuning top layers ──")
         model = builder.prepare_finetuning(model)
-        h2 = self._fit(model, PHASE2_EPOCHS, phase=2)
+        # Carry over Phase 1's best val_loss so an early (worse) Phase 2
+        # epoch can't overwrite the better Phase 1 checkpoint.
+        h2 = self._fit(model, PHASE2_EPOCHS,
+                       best_so_far=min(h1.history["val_loss"]))
 
         return h1, h2
 
@@ -69,7 +72,7 @@ class TransferTrainer:
         self,
         model: tf.keras.Model,
         epochs: int,
-        phase: int,
+        best_so_far: float | None = None,
     ) -> tf.keras.callbacks.History:
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
@@ -82,6 +85,7 @@ class TransferTrainer:
                 filepath=MODEL_TRANSFER_PATH,
                 monitor="val_loss",
                 save_best_only=True,
+                initial_value_threshold=best_so_far,
                 verbose=1,
             ),
             tf.keras.callbacks.ReduceLROnPlateau(

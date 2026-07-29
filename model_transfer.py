@@ -3,8 +3,8 @@ model_transfer.py — Transfer learning model for RAVDESS emotion classification
 
 Architecture
 ------------
-Input (128, 128, 1)
-  → GrayToRGB          — repeat single channel to 3 channels (EfficientNet expects RGB)
+Input (128, 128, 3)    — mel + delta + delta-delta as the three "RGB" channels
+  → ZScoreToPixels     — map Z-scores to [0, 255] pixel range
   → EfficientNetB0     — ImageNet pretrained feature extractor (include_top=False)
   → GlobalAveragePooling2D
   → BatchNormalization
@@ -34,28 +34,10 @@ features bypasses the data-scarcity problem that limits training from scratch.
 import keras
 import tensorflow as tf
 from keras import layers, regularizers, Model, Input
-from config import IMG_SIZE, NUM_CLASSES, TRANSFER_LR, FINETUNE_LR, FOCAL_GAMMA
+from config import IMG_SIZE, N_CHANNELS, NUM_CLASSES, TRANSFER_LR, FINETUNE_LR, FOCAL_GAMMA
 
 L2 = 1e-4
-FINETUNE_LAYERS = 30   # number of EfficientNetB0 layers to unfreeze in Phase 2
-
-
-@keras.saving.register_keras_serializable(package="TransferEmotionCNN")
-class GrayToRGB(layers.Layer):
-    """
-    Repeat a single-channel spectrogram to 3 channels.
-
-    EfficientNetB0 expects RGB input. Rather than training a projection
-    layer, we simply tile the grey channel — this preserves the exact
-    spectrogram values in all three channels, so the pretrained conv
-    kernels see a valid (though monochrome) image on the first forward pass.
-    """
-
-    def call(self, x):
-        return tf.repeat(x, repeats=3, axis=-1)
-
-    def get_config(self):
-        return super().get_config()
+FINETUNE_LAYERS = 60   # number of EfficientNetB0 layers to unfreeze in Phase 2
 
 
 @keras.saving.register_keras_serializable(package="TransferEmotionCNN")
@@ -100,12 +82,10 @@ class TransferEmotionModel:
 
     def build_model(self) -> Model:
         """Build and compile Phase 1 model (EfficientNetB0 base frozen)."""
-        inputs = Input(shape=(*IMG_SIZE, 1), name="mel_spectrogram")
+        inputs = Input(shape=(*IMG_SIZE, N_CHANNELS), name="mel_spectrogram")
 
-        # (H, W, 1) → (H, W, 3)
-        x = GrayToRGB(name="gray_to_rgb")(inputs)
         # Z-score [-3, 3] → pixel [0, 255] so EfficientNet sees expected input range
-        x = ZScoreToPixels(name="z_to_pixels")(x)
+        x = ZScoreToPixels(name="z_to_pixels")(inputs)
 
         base = keras.applications.EfficientNetB0(
             include_top=False,

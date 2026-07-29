@@ -12,7 +12,7 @@ Usage:
 import argparse
 import tensorflow as tf
 
-from config import MODEL_PATH, MODEL_TRANSFER_PATH
+from config import MODEL_PATH, MODEL_TRANSFER_PATH, RANDOM_SEED
 from data_loader import DataLoader
 from preprocess import SpectrogramDataset
 from model import EmotionCNN
@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    tf.keras.utils.set_random_seed(RANDOM_SEED)   # reproducible weight init
 
     # ── 1. Data exploration ────────────────────────────────────────────
     print("\n=== [1/4] Data Exploration ===")
