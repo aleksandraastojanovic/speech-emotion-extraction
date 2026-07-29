@@ -84,7 +84,8 @@ class EmotionCNN:
 
         model = Model(inputs=inputs, outputs=outputs, name="EmotionCNN")
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE,
+                                               clipnorm=1.0),
             loss=focal_loss,
             metrics=["accuracy"],
         )

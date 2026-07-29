@@ -44,16 +44,17 @@ TEST_SIZE      = 0.10   # 10 % test
 VAL_SIZE       = 0.15   # 15 % validation  (taken from remaining 90 %)
 RANDOM_SEED    = 42
 BATCH_SIZE     = 32
-EPOCHS                = 60
-LEARNING_RATE         = 1e-3
+EPOCHS                = 80
+LEARNING_RATE         = 3e-4   # 1e-3 was unstable: val_loss spiked, early
+                               # stopping restored a deeply underfit epoch
 
 # ── Transfer learning ──────────────────────────────────────────────────────
 PHASE1_EPOCHS  = 20   # frozen base: train only the new head
 PHASE2_EPOCHS  = 40   # unfreeze top layers: fine-tune end-to-end
 TRANSFER_LR    = 1e-3  # Phase 1 learning rate
 FINETUNE_LR    = 1e-4  # Phase 2 learning rate (10× smaller)
-EARLY_STOPPING_PATIENCE  = 20   # increased from 10 — val set is noisy (120 samples)
-REDUCE_LR_PATIENCE       = 10   # increased from 5
+EARLY_STOPPING_PATIENCE  = 20   # val set is small (216) and noisy
+REDUCE_LR_PATIENCE       = 5    # halve LR quickly when val_loss stalls
 
 # ── Augmentation ──────────────────────────────────────────────────────────
 AUG_PROB       = 0.50   # probability of applying each augmentation

@@ -109,7 +109,8 @@ class TransferEmotionModel:
 
         model = Model(inputs=inputs, outputs=outputs, name="TransferEmotionCNN")
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=TRANSFER_LR),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=TRANSFER_LR,
+                                               clipnorm=1.0),
             loss=_focal_loss,
             metrics=["accuracy"],
         )
@@ -131,7 +132,8 @@ class TransferEmotionModel:
             layer.trainable = False
 
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=FINETUNE_LR),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=FINETUNE_LR,
+                                               clipnorm=1.0),
             loss=_focal_loss,
             metrics=["accuracy"],
         )
