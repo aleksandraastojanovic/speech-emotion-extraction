@@ -4,22 +4,25 @@ main.py — Full pipeline entry point for RAVDESS emotion CNN.
 Usage:
     python main.py                              # CNN from scratch (default)
     python main.py --mode transfer              # EfficientNetB0 transfer learning
+    python main.py --mode ensemble              # average all model_*.keras (no training)
     python main.py --skip-preprocess            # use cached processed/ .npy files
     python main.py --eval-only                  # skip training, evaluate saved model
     python main.py --mode transfer --eval-only  # evaluate saved transfer model
 """
 
 import argparse
+import glob
+import os
 import tensorflow as tf
 
-from config import MODEL_PATH, MODEL_TRANSFER_PATH, RANDOM_SEED
+from config import BASE_DIR, MODEL_PATH, MODEL_TRANSFER_PATH, RANDOM_SEED
 from data_loader import DataLoader
 from preprocess import SpectrogramDataset
 from model import EmotionCNN
 from train import Trainer
 from model_transfer import TransferEmotionModel
 from train_transfer import TransferTrainer
-from evaluate import Evaluator
+from evaluate import Evaluator, SoftmaxAverageEnsemble
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,9 +31,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["cnn", "transfer"],
+        choices=["cnn", "transfer", "ensemble"],
         default="cnn",
-        help="cnn = train from scratch (default) | transfer = EfficientNetB0 fine-tuning",
+        help="cnn = train from scratch (default) | transfer = EfficientNetB0 "
+             "fine-tuning | ensemble = average all saved model_*.keras",
     )
     parser.add_argument(
         "--skip-preprocess",
@@ -80,7 +84,7 @@ def main() -> None:
             model = tf.keras.models.load_model(model_path)
             print("  Best CNN model reloaded from disk.")
 
-    else:  # transfer
+    elif args.mode == "transfer":
         model_path = MODEL_TRANSFER_PATH
         if args.eval_only:
             print("  --eval-only set: loading saved transfer model, skipping training.")
@@ -91,6 +95,20 @@ def main() -> None:
             trainer.plot_history(h1, h2)
             model = tf.keras.models.load_model(model_path)
             print("  Best transfer model reloaded from disk.")
+
+    else:  # ensemble — no training, average every saved model_*.keras
+        files = sorted(glob.glob(os.path.join(BASE_DIR, "model_*.keras")))
+        if len(files) < 2:
+            raise SystemExit(
+                "Ensemble mode needs at least 2 model_*.keras files in the "
+                "project root — train the cnn and transfer models first."
+            )
+        print("  Ensemble members:")
+        for f in files:
+            print(f"    - {os.path.basename(f)}")
+        model = SoftmaxAverageEnsemble(
+            [tf.keras.models.load_model(f) for f in files]
+        )
 
     # ── 4. Evaluation ─────────────────────────────────────────────────
     print("\n=== [4/4] Evaluation ===")

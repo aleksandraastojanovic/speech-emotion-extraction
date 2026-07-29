@@ -13,7 +13,32 @@ import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report as sk_report
 import tensorflow as tf
 
-from config import RESULTS_DIR
+from config import RESULTS_DIR, FOCAL_GAMMA
+
+
+class SoftmaxAverageEnsemble:
+    """
+    Averages the softmax outputs of several trained models.
+
+    Different architectures (scratch CNN vs EfficientNet transfer) make
+    decorrelated errors; averaging their probabilities cancels part of
+    those errors. Exposes the same predict/evaluate interface Evaluator
+    expects, so it can be dropped in wherever a single model is used.
+    """
+
+    def __init__(self, models: list):
+        self.models = models
+
+    def predict(self, X, verbose=0):
+        return np.mean([m.predict(X, verbose=verbose) for m in self.models],
+                       axis=0)
+
+    def evaluate(self, X, y, verbose=0):
+        probs = self.predict(X)
+        acc   = float((probs.argmax(axis=1) == y).mean())
+        p_t   = np.clip(probs[np.arange(len(y)), y], 1e-7, 1.0)
+        loss  = float(np.mean(-(1.0 - p_t) ** FOCAL_GAMMA * np.log(p_t)))
+        return loss, acc
 
 
 class Evaluator:
