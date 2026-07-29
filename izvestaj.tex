@@ -1,0 +1,493 @@
+% ============================================================
+%  Izveštaj o projektu — Neuronske mreže (13E054NM)
+%  Deo 1: Prepoznavanje emocija iz govora pomoću CNN-a
+%  Deo 2: Fuzzy logika (biće dodat — videti marker na dnu)
+%
+%  Kompajlirati sa pdflatex (npr. na Overleaf-u).
+%  Slike se učitavaju iz foldera results/ — okačiti ceo folder.
+% ============================================================
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[serbian]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\graphicspath{{results/}}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+
+\title{Prepoznavanje emocija iz govora\\
+       \large Projekat iz predmeta Neuronske mreže (13E054NM)\\
+       Elektrotehnički fakultet, Univerzitet u Beogradu}
+% TODO: upisati ime(na) i broj(eve) indeksa
+\author{Ime Prezime — broj indeksa}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\part{Prepoznavanje emocija iz govora pomoću CNN-a}
+% ============================================================
+
+\section{Opis problema}
+
+Cilj projekta je automatsko prepoznavanje emocije iz snimka govora. Svaki
+audio fajl pretvara se u mel-spektrogram --- 2D sliku koja vizualizuje
+raspoređenost energije zvuka kroz vreme i frekvenciju --- a zatim se ta slika
+klasifikuje konvolucionom neuronskom mrežom.
+
+Prepoznavanje emocija iz govora je inherentno težak problem jer:
+\begin{itemize}
+  \item ista emocija može zvučati različito kod različitih govornika;
+  \item neke emocije (tuga, strah, neutralno) imaju slične akustičke
+        karakteristike;
+  \item skup podataka je mali (1.440 snimaka za 8 klasa), što pogoduje
+        preprilagođavanju;
+  \item ni ljudi nisu pouzdani: autori RAVDESS baze mere ljudsku tačnost od
+        $\approx 62\%$ na audio-only govoru --- to je realan orijentir za
+        plafon zadatka.
+\end{itemize}
+
+\section{Skup podataka --- RAVDESS}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+Karakteristika & Vrednost \\
+\midrule
+Ukupno snimaka           & 1.440 \\
+Broj glumaca             & 24 (12 muških, 12 ženskih) \\
+Broj klasa emocija       & 8 \\
+Frekvencija uzorkovanja  & 48\,kHz (resample na 22.050\,Hz) \\
+Format                   & WAV (mono) \\
+\bottomrule
+\end{tabular}
+\caption{Osnovne karakteristike RAVDESS skupa podataka.}
+\end{table}
+
+\noindent\textbf{Klase emocija:} \texttt{neutral}, \texttt{calm},
+\texttt{happy}, \texttt{sad}, \texttt{angry}, \texttt{fearful},
+\texttt{disgust}, \texttt{surprised}.
+
+\subsection{Neravnoteža klasa}
+
+Klasa \texttt{neutral} ima samo 96 snimaka, dok svaka od preostalih 7 klasa
+ima 192 snimka --- odnos 2:1 (slika~\ref{fig:dist}). Problem je rešen
+\emph{tačno balansiranom augmentacijom}: neutral dobija duplo više
+augmentovanih kopija, pa svih 8 klasa ulazi u trening sa identičnim brojem
+uzoraka (432).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{class_distribution.png}
+  \caption{Raspodela uzoraka po klasama emocija.}
+  \label{fig:dist}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{sample_spectrograms.png}
+  \caption{Po jedan mel-spektrogram za svaku klasu emocija.}
+  \label{fig:samples}
+\end{figure}
+
+\section{Preprocesiranje audio signala}
+
+\subsection{Pipeline po fajlu}
+
+\begin{enumerate}
+  \item učitavanje celog snimka (librosa, $sr = 22.050$\,Hz);
+  \item \textbf{trim tišine} ($\mathrm{top\_db}=30$);
+  \item crop/padding na tačno 3 sekunde;
+  \item [opciono] augmentacija talasnog oblika;
+  \item mel-spektrogram (128 mel binova) $\rightarrow$ dB skala;
+  \item \textbf{delta i delta-delta} kanali (brzina i ubrzanje spektra);
+  \item resize svakog kanala na $128\times128$ (bilinearna interpolacija);
+  \item Z-score normalizacija po kanalu;
+  \item [opciono] SpecAugment (maske preko sva 3 kanala);
+  \item izlaz: tenzor $(128, 128, 3)$.
+\end{enumerate}
+
+\subsection{Trim tišine --- najveći pojedinačni dobitak}
+
+RAVDESS snimci počinju i završavaju se tišinom. Merenje na stvarnom fajlu:
+od 3,30\,s snimka, posle trima ostane \textbf{1,32\,s govora} --- pipeline
+bez trima (koji seče prve 3 sekunde) hrani mrežu ulazom koji je 40--60\%
+tišina, a kraj rečenice je često odsečen.
+\texttt{librosa.effects.trim(top\_db=30)} uklanja delove tiše od 30\,dB
+ispod vrha snimka; prag je relativan, pa se prilagođava i tihim
+(\texttt{sad}, \texttt{calm}) snimcima.
+
+\subsection{Delta kanali umesto sive slike}
+
+Statični mel-spektrogram opisuje \emph{šta} je prisutno u spektru, ali ne i
+\emph{kako se menja} --- a emocija je upravo u dinamici (tempo, tremor, nagle
+promene). Uz mel-spektrogram računaju se \textbf{delta} (prvi izvod po
+vremenu) i \textbf{delta-delta} (drugi izvod), pa se slažu kao tri kanala
+slike. Dobitak je dvostruk:
+\begin{enumerate}
+  \item CNN od nule dobija eksplicitnu informaciju o dinamici govora;
+  \item transfer model (EfficientNetB0 očekuje RGB) dobija tri
+        \emph{informativna} kanala umesto tri kopije istog kanala.
+\end{enumerate}
+
+\subsection{Z-score normalizacija po uzorku i kanalu}
+
+Različiti snimci imaju različite nivoe glasnoće. Z-score normalizacijom
+svaki kanal svakog spektrograma se centrira oko nule i skalira na jediničnu
+devijaciju, nezavisno od glasnoće snimka --- mreža ne može koristiti
+apsolutnu glasnoću kao prečicu za klasifikaciju.
+
+\subsection{Podela podataka}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Skup & Udeo & Broj uzoraka (pre augmentacije) \\
+\midrule
+Trening    & 75\% & 1.080 \\
+Validacija & 15\% & 216 \\
+Test       & 10\% & 144 \\
+\bottomrule
+\end{tabular}
+\caption{Stratifikovana nasumična podela (seed 42, deterministična).}
+\end{table}
+
+Test skup od 144 uzorka znači da jedna predikcija menja tačnost za
+0,7\,p.p.\ --- razlike manje od $\sim$3\,p.p.\ su u zoni šuma.
+
+\emph{Napomena:} tokom razvoja testirana je i speaker-independent podela
+(glumci 21--24 izdvojeni), ali daje $\sim$38\% tačnosti --- glumci se
+akustički previše razlikuju da bi 2 test glumca bila reprezentativna.
+Zadržana je nasumična stratifikovana (speaker-dependent) podela, što treba
+imati u vidu pri poređenju sa literaturom.
+
+\section{Augmentacija podataka}
+
+\subsection{Augmentacija talasnog oblika}
+
+Augmentacija se primenjuje na \emph{sirovi talasni oblik}, ne na piksele
+spektrograma --- augmentacija piksela stvara fizički nerealne artefakte, dok
+augmentacija talasnog oblika uvek daje validan audio signal.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Tehnika & Parametri & Efekat na spektrogram \\
+\midrule
+Time stretching & rate $\in [0.85, 1.15]$, $p{=}0.5$ & horizontalno širenje/skupljanje \\
+Pitch shifting  & $\pm 2$ polutona, $p{=}0.5$        & vertikalni pomak sadržaja \\
+Gaussov šum     & $\sigma{=}0.005$, $p{=}0.5$        & simulacija šuma mikrofona \\
+\bottomrule
+\end{tabular}
+\caption{Augmentacije talasnog oblika.}
+\end{table}
+
+Svaka augmentovana kopija ima deterministički seed, pa je ceo trening skup
+reprodukovljiv iako se preprocesiranje izvršava paralelno na svim jezgrima.
+
+\subsection{SpecAugment}
+
+SpecAugment maskira nasumične frekvencijske pojaseve i vremenske segmente
+(2 maske $\times$ max.\ 20 binova/okvira). Primenjuje se \emph{posle}
+Z-score normalizacije (maskirana vrednost 0 $\approx$ sredina distribucije)
+i preko sva tri kanala istovremeno, da mel i delta kanali ostanu poravnati.
+
+\subsection{Tačno balansirana augmentacija}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Klasa & Original & Kopija (1 plain + N aug) & Ukupno \\
+\midrule
+neutral          & 72  & $6\times$ (1+5) & 432 \\
+svih ostalih 7   & 144 & $3\times$ (1+2) & 432 \\
+\bottomrule
+\end{tabular}
+\caption{Trening skup: 3.456 uzoraka, tačno 432 po klasi. Validacija i
+test se nikad ne augmentuju.}
+\end{table}
+
+\section{Arhitektura modela --- CNN od nule}
+
+\subsection{Struktura}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Sloj & Izlaz \\
+\midrule
+Ulaz (mel + $\Delta$ + $\Delta\Delta$) & $(128, 128, 3)$ \\
+CNNBlock(32)                    & $(64, 64, 32)$ \\
+CNNBlock(64)                    & $(32, 32, 64)$ \\
+CNNBlock(128, dropout 0.3)      & $(16, 16, 128)$ \\
+CNNBlock(256, dropout 0.3)      & $(8, 8, 256)$ \\
+GlobalAveragePooling2D          & $(256)$ \\
+Dense(256, ReLU, L2 $10^{-4}$) + Dropout(0.5) & $(256)$ \\
+Dense(8, Softmax)               & $(8)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Svaki \texttt{CNNBlock}: Conv2D $\rightarrow$ BatchNorm $\rightarrow$ ReLU
+$\rightarrow$ MaxPool2D $\rightarrow$ [Dropout] ($\approx$458k parametara
+ukupno).
+
+\subsection{Stabilnost treninga}
+
+Prvobitni trening (Adam, $LR = 10^{-3}$) je \emph{divergirao}: validacioni
+gubitak je skakao do 5{,}0, a rano zaustavljanje je vraćalo duboko
+nedotrenirane modele iz ranih epoha (test 38\%). Rešenje:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Izmena & Vrednost & Efekat \\
+\midrule
+Learning rate     & $10^{-3} \rightarrow 3\cdot10^{-4}$ & bez divergencije \\
+Gradient clipping & clipnorm $=1.0$ & seče eksplozivne gradijente \\
+Batch size        & $32 \rightarrow 64$ & mirnije BatchNorm statistike \\
+\bottomrule
+\end{tabular}
+\caption{Stabilizacija treninga.}
+\end{table}
+
+\subsection{Selekcija modela po validacionoj tačnosti}
+
+Sa focal loss-om na malom validacionom skupu (216 uzoraka), validacioni
+gubitak je toliko šumovit da checkpoint po njemu sistematski bira
+,,srećne`` rane epohe (najbolja epoha 10 $\rightarrow$ test 50{,}7\%).
+Prelaskom \texttt{EarlyStopping} i \texttt{ModelCheckpoint} na
+\textbf{val\_accuracy}, najbolja epoha je postala 44, a test je skočio na
+\textbf{59{,}7\%}. \texttt{ReduceLROnPlateau} ostaje na val\_loss (glađi
+signal za raspored learning rate-a).
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+Callback & Parametri \\
+\midrule
+EarlyStopping     & monitor $=$ val\_accuracy, patience $= 20$, restore best \\
+ModelCheckpoint   & monitor $=$ val\_accuracy, save best only \\
+ReduceLROnPlateau & monitor $=$ val\_loss, factor $= 0.5$, patience $= 5$ \\
+\bottomrule
+\end{tabular}
+\caption{Callback konfiguracija.}
+\end{table}
+
+\subsection{Funkcija gubitka --- Focal Loss}
+
+\begin{equation}
+  \mathrm{FL}(p_t) = -(1 - p_t)^{\gamma}\,\log(p_t), \qquad \gamma = 2{,}0
+\end{equation}
+
+Focal loss smanjuje doprinos lako klasifikovanih primera i fokusira trening
+na teške (\texttt{sad}, \texttt{fearful}).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{training_history.png}
+  \caption{Krive treninga CNN-a od nule (tačnost i gubitak).}
+  \label{fig:hist-cnn}
+\end{figure}
+
+\section{Transfer learning --- EfficientNetB0}
+
+\subsection{Arhitektura}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Sloj & Uloga \\
+\midrule
+Ulaz $(128,128,3)$      & mel + $\Delta$ + $\Delta\Delta$ \\
+ZScoreToPixels          & $[-3,3] \rightarrow [0,255]$ (opseg ImageNet piksela) \\
+Resizing$(224,224)$     & nativna rezolucija EfficientNet pretreninga \\
+EfficientNetB0          & ImageNet težine, bez top sloja \\
+GAP + BatchNorm         & agregacija \\
+Dense(256) + Dropout(0.5) + Dense(8, Softmax) & klasifikaciona glava \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Dve ključne adaptacije ulaza:
+\begin{itemize}
+  \item \textbf{ZScoreToPixels:} bez ovoga pretrenirani filteri vide
+        vrednosti $\sim[-3,3]$ umesto $[0,255]$ i ne aktiviraju se;
+  \item \textbf{Resizing(224):} na $128\times128$ poslednja mapa
+        EfficientNet-a je samo $4\times4$; na $224\times224$ mreža radi na
+        skali na kojoj je pretrenirana.
+\end{itemize}
+
+\subsection{Dvofazno treniranje}
+
+\textbf{Faza 1 --- zamrznut base (do 40 epoha, $LR=10^{-3}$):} trenira se
+samo glava. Granica je pomerena sa 20 na 40 epoha jer je validaciona
+tačnost još rasla pri preseku; rano zaustavljanje odlučuje stvarni kraj.
+
+\textbf{Faza 2 --- fine-tuning (do 60 epoha, $LR=5\cdot10^{-5}$):}
+odmrzava se poslednjih 20 slojeva. Eksperimentalno: 30--60 odmrznutih
+slojeva sa $LR=10^{-4}$ dovodi do momentalnog preprilagođavanja (trening
+94\%, val\_loss raste od prve epohe); 20 slojeva sa $LR=5\cdot10^{-5}$
+daje sporo ali stabilno poboljšanje kroz celu fazu.
+
+\textbf{Ispravka checkpoint baga:} na početku faze 2 \texttt{ModelCheckpoint}
+resetuje svoj ,,best`` na $-\infty$, pa bi prva (lošija) epoha faze 2
+pregazila najbolji model faze 1. Rešeno prosleđivanjem
+\texttt{initial\_value\_threshold} $=$ max.\ validaciona tačnost faze 1.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{training_history_transfer.png}
+  \caption{Krive treninga transfer modela; isprekidana linija označava
+  početak faze 2 (fine-tuning).}
+  \label{fig:hist-transfer}
+\end{figure}
+
+\section{Ansambl}
+
+Finalni model je \textbf{prosek softmax izlaza tri mreže}: dva CNN-a od
+nule (nezavisna trening run-a) i transfer modela. Različite arhitekture
+greše na različitim uzorcima, pa usrednjavanje poništava deo nekoreliranih
+grešaka.
+
+Kombinacija je \emph{birana na validacionom skupu} (73{,}2\%), pa je tek
+onda jednom izmerena na testu --- bez ,,pecanja`` test rezultata.
+
+\section{Rezultati i analiza}
+
+\subsection{Poređenje modela}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Model & Test tačnost & Napomena \\
+\midrule
+CNN od nule (stari pipeline) & 50{,}7\% & pre svih popravki \\
+Transfer (stari pipeline)    & 60{,}4\% & stari najbolji rezultat \\
+CNN od nule (novi pipeline)  & \textbf{59{,}7\%} & $+9{,}0$ p.p. \\
+Transfer (novi pipeline)     & \textbf{60{,}4\%} & val 66{,}7\% \\
+\textbf{Ansambl (2$\times$CNN + transfer)} & \textbf{66{,}0\%} &
+  $\mathbf{+5{,}6}$ \textbf{p.p.}; val 73{,}2\% \\
+\bottomrule
+\end{tabular}
+\caption{Poređenje svih modela. Ansambl od 66{,}0\% je iznad izmerene
+ljudske tačnosti ($\approx$62\%) za audio-only RAVDESS govor.}
+\end{table}
+
+\subsection{Per-klasa analiza (ansambl)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Klasa & Precision & Recall & F1 \\
+\midrule
+disgust   & 0.89 & 0.84 & \textbf{0.86} \\
+angry     & 0.81 & 0.89 & \textbf{0.85} \\
+surprised & 0.78 & 0.90 & \textbf{0.84} \\
+calm      & 0.50 & 0.74 & 0.60 \\
+happy     & 0.80 & 0.42 & 0.55 \\
+neutral   & 0.46 & 0.60 & 0.52 \\
+fearful   & 0.56 & 0.47 & 0.51 \\
+sad       & 0.47 & 0.37 & 0.41 \\
+\bottomrule
+\end{tabular}
+\caption{Per-klasa metrike ansambla (makro F1 $= 0{,}64$). Tri klase su na
+F1 $\geq 0{,}84$; najteža ostaje \texttt{sad} --- tiha, spora, akustički
+slična \texttt{calm} i \texttt{neutral}.}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{confusion_matrix.png}
+  \caption{Konfuziona matrica ansambla (procenti po redu).}
+  \label{fig:cm}
+\end{figure}
+
+\subsection{Analiza preprilagođavanja}
+
+Jaz trening/validacija (trening $\sim$90\%, validacija 67--73\%) postoji u
+svim modelima i posledica je fundamentalnog ograničenja: $\sim$135
+originalnih snimaka po klasi. Augmentacija umnožava varijacije, ali ne
+dodaje nove govornike ni nove interpretacije.
+
+Jaz validacija/test (73\% naspram 66\%) ima dva uzroka: (1) validacioni
+skup učestvuje u svim odlukama --- selekcija epohe, raspored learning
+rate-a, izbor ansambla --- pa je blago ,,potrošen``; (2) oba skupa su mala
+(216 / 144 uzoraka), pa par uzoraka pravi procentni poen razlike.
+
+\subsection{Realan plafon i šta bi trebalo za više}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+Ograničenje & Uticaj \\
+\midrule
+1.440 snimaka, 8 klasa & $\sim$135 originala po klasi --- glavni limit \\
+Ljudska tačnost $\approx$62\% & glumljene emocije nisu jednoznačne ni ljudima \\
+Akustičko preklapanje & sad$\leftrightarrow$calm$\leftrightarrow$neutral;
+                        happy$\leftrightarrow$fearful$\leftrightarrow$surprised \\
+Test $=$ 144 uzorka & $\pm$3 p.p.\ šuma u svakom merenju \\
+\bottomrule
+\end{tabular}
+\caption{Ograničenja zadatka.}
+\end{table}
+
+Radovi koji prijavljuju 75--85\% koriste wav2vec2/HuBERT embeddinge
+(pretrenirane na hiljadama sati govora --- nije ,,CNN nad spektrogramima``),
+spajanje više baza (RAVDESS+TESS+CREMA-D) ili multimodalnost (audio+video).
+U okviru zadatka ovog projekta, 66\% je blizu realnog plafona.
+
+\section{Zaključak prvog dela}
+
+Polazna tačka je bila 50{,}7\% (CNN) / 60{,}4\% (transfer). Kroz
+sistematsku dijagnostiku --- čitanje krivih treninga, konfuzionih matrica i
+per-klasa metrika posle svakog eksperimenta --- identifikovani su i
+otklonjeni konkretni problemi:
+
+\begin{enumerate}
+  \item \textbf{Podaci:} trim tišine (ulaz je bio 40--60\% tišina), delta
+        kanali (dinamika govora), tačan balans klasa (432 po klasi),
+        reprodukovljiva augmentacija.
+  \item \textbf{Trening:} stabilizacija ($LR = 3\cdot10^{-4}$, gradient
+        clipping, batch 64), selekcija modela po validacionoj tačnosti
+        umesto šumovitog validacionog gubitka.
+  \item \textbf{Transfer:} Resizing na 224 (nativna skala pretreninga),
+        blaži fine-tuning (20 slojeva, $LR = 5\cdot10^{-5}$), ispravka
+        checkpoint baga između faza.
+  \item \textbf{Ansambl:} prosek softmax izlaza tri mreže, biran na
+        validaciji.
+\end{enumerate}
+
+\textbf{Konačni rezultat: 66{,}0\% test tačnosti na 8 klasa} ---
+poboljšanje od $+5{,}6$ p.p.\ u odnosu na stari najbolji model i
+$+15{,}3$ p.p.\ u odnosu na stari CNN od nule, iznad izmerene ljudske
+tačnosti za ovaj zadatak.
+
+% ============================================================
+% DEO 2: FUZZY LOGIKA
+% ------------------------------------------------------------
+% Ovde dodati drugi deo izveštaja, npr.:
+%
+% \part{Fuzzy logika}
+% \section{...}
+%
+% ============================================================
+
+\end{document}
