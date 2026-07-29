@@ -43,7 +43,7 @@ NUM_CLASSES = len(EMOTION_MAP)   # 8
 TEST_SIZE      = 0.10   # 10 % test
 VAL_SIZE       = 0.15   # 15 % validation  (taken from remaining 90 %)
 RANDOM_SEED    = 42
-BATCH_SIZE     = 32
+BATCH_SIZE     = 64   # larger batch → steadier BatchNorm stats & gradients
 EPOCHS                = 80
 LEARNING_RATE         = 3e-4   # 1e-3 was unstable: val_loss spiked, early
                                # stopping restored a deeply underfit epoch

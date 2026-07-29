@@ -60,10 +60,10 @@ class TransferTrainer:
 
         print("\n[TransferTrainer] ── Phase 2: fine-tuning top layers ──")
         model = builder.prepare_finetuning(model)
-        # Carry over Phase 1's best val_loss so an early (worse) Phase 2
+        # Carry over Phase 1's best val_accuracy so an early (worse) Phase 2
         # epoch can't overwrite the better Phase 1 checkpoint.
         h2 = self._fit(model, PHASE2_EPOCHS,
-                       best_so_far=min(h1.history["val_loss"]))
+                       best_so_far=max(h1.history["val_accuracy"]))
 
         return h1, h2
 
@@ -74,16 +74,20 @@ class TransferTrainer:
         epochs: int,
         best_so_far: float | None = None,
     ) -> tf.keras.callbacks.History:
+        # val_accuracy for model selection, val_loss for LR schedule
+        # (see train.py for rationale)
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss",
+                monitor="val_accuracy",
+                mode="max",
                 patience=EARLY_STOPPING_PATIENCE,
                 restore_best_weights=True,
                 verbose=1,
             ),
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=MODEL_TRANSFER_PATH,
-                monitor="val_loss",
+                monitor="val_accuracy",
+                mode="max",
                 save_best_only=True,
                 initial_value_threshold=best_so_far,
                 verbose=1,

@@ -26,16 +26,21 @@ class Trainer:
     def train(self) -> tf.keras.callbacks.History:
         # No class_weight — per-class augmentation in preprocess.py already
         # balances the training distribution exactly.
+        # Model selection tracks val_accuracy: with focal loss on a small,
+        # noisy val set, val_loss keeps picking lucky early epochs.
+        # ReduceLROnPlateau stays on val_loss (smoother signal for LR).
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss",
+                monitor="val_accuracy",
+                mode="max",
                 patience=EARLY_STOPPING_PATIENCE,
                 restore_best_weights=True,
                 verbose=1,
             ),
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=MODEL_PATH,
-                monitor="val_loss",
+                monitor="val_accuracy",
+                mode="max",
                 save_best_only=True,
                 verbose=1,
             ),
