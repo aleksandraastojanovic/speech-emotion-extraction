@@ -49,10 +49,10 @@ LEARNING_RATE         = 3e-4   # 1e-3 was unstable: val_loss spiked, early
                                # stopping restored a deeply underfit epoch
 
 # ── Transfer learning ──────────────────────────────────────────────────────
-PHASE1_EPOCHS  = 20   # frozen base: train only the new head
+PHASE1_EPOCHS  = 40   # frozen base: val acc was still rising at 20 epochs
 PHASE2_EPOCHS  = 40   # unfreeze top layers: fine-tune end-to-end
 TRANSFER_LR    = 1e-3  # Phase 1 learning rate
-FINETUNE_LR    = 1e-4  # Phase 2 learning rate (10× smaller)
+FINETUNE_LR    = 5e-5  # Phase 2 LR — 1e-4 overfit within a few epochs
 EARLY_STOPPING_PATIENCE  = 20   # val set is small (216) and noisy
 REDUCE_LR_PATIENCE       = 5    # halve LR quickly when val_loss stalls
 

@@ -5,6 +5,7 @@ Architecture
 ------------
 Input (128, 128, 3)    — mel + delta + delta-delta as the three "RGB" channels
   → ZScoreToPixels     — map Z-scores to [0, 255] pixel range
+  → Resizing(224, 224) — EfficientNet's native pretraining resolution
   → EfficientNetB0     — ImageNet pretrained feature extractor (include_top=False)
   → GlobalAveragePooling2D
   → BatchNormalization
@@ -37,7 +38,9 @@ from keras import layers, regularizers, Model, Input
 from config import IMG_SIZE, N_CHANNELS, NUM_CLASSES, TRANSFER_LR, FINETUNE_LR, FOCAL_GAMMA
 
 L2 = 1e-4
-FINETUNE_LAYERS = 60   # number of EfficientNetB0 layers to unfreeze in Phase 2
+FINETUNE_LAYERS = 20   # EfficientNetB0 layers to unfreeze in Phase 2 —
+                       # unfreezing more (30-60) overfits within epochs
+BASE_INPUT = 224       # upsample spectrograms to EfficientNet's native scale
 
 
 @keras.saving.register_keras_serializable(package="TransferEmotionCNN")
@@ -86,11 +89,13 @@ class TransferEmotionModel:
 
         # Z-score [-3, 3] → pixel [0, 255] so EfficientNet sees expected input range
         x = ZScoreToPixels(name="z_to_pixels")(inputs)
+        # 128 → 224: match the scale EfficientNetB0 was pretrained at
+        x = layers.Resizing(BASE_INPUT, BASE_INPUT, name="upsample")(x)
 
         base = keras.applications.EfficientNetB0(
             include_top=False,
             weights="imagenet",
-            input_shape=(*IMG_SIZE, 3),
+            input_shape=(BASE_INPUT, BASE_INPUT, 3),
         )
         base.trainable = False   # Phase 1: freeze all base layers
 
