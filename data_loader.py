@@ -1,21 +1,3 @@
-"""
-data_loader.py — Step 1: Data Exploration
-==========================================
-Responsibilities
-----------------
-1. Scan the RAVDESS directory and decode emotion labels from filenames.
-2. Display a bar-chart of samples per class (the "histogram of sample
-   distributions" required by the project specification).
-3. Show one representative mel-spectrogram per class.
-4. Report basic dataset statistics and flag the class imbalance.
-
-Design notes
-------------
-- RAVDESSParser  : pure data-parsing logic, no side-effects.
-- DataVisualizer : all matplotlib / display concerns isolated here.
-- DataLoader     : high-level facade; the only class client code needs.
-"""
-
 import os
 import glob
 import numpy as np
@@ -29,30 +11,15 @@ from collections import Counter
 import config
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 class RAVDESSParser:
-    """
-    Parses RAVDESS filenames into structured metadata.
 
-    RAVDESS filename format:
-        MM-VV-EE-II-SS-RR-AA.wav
-        ^^  ^^ ^^
-        |   |  └─ Emotion (01-08)
-        |   └──── Vocal channel (01=speech, 02=song)
-        └──────── Modality (03=audio-only)
-
-    We keep only speech files (VV=01) to avoid mixing speech and song.
-    """
-
-    FILENAME_EMOTION_POS = 2   # 0-indexed position after splitting on '-'
+    FILENAME_EMOTION_POS = 2
 
     def __init__(self, data_glob: str = config.DATA_DIR):
         self.data_glob = data_glob
         self._records: list[dict] = []
 
-    # ── public ──────────────────────────────────────────────────────────────
     def parse(self) -> pd.DataFrame:
-        """Walk all Actor_* folders, return a DataFrame of (path, emotion_id, emotion_name)."""
         wav_files = sorted(glob.glob(os.path.join(self.data_glob, "*.wav")))
 
         if not wav_files:
@@ -67,7 +34,6 @@ class RAVDESSParser:
             fname   = os.path.splitext(os.path.basename(path))[0]
             parts   = fname.split("-")
 
-            # Keep only audio-speech files (modality=03, vocal_channel=01)
             if parts[0] != "03" or parts[1] != "01":
                 skipped += 1
                 continue
@@ -92,24 +58,13 @@ class RAVDESSParser:
         return pd.DataFrame(records)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 class DataVisualizer:
-    """
-    Handles all plots required for Step 1:
-    - Bar chart of class distribution
-    - One sample mel-spectrogram per class
-    """
 
     def __init__(self, df: pd.DataFrame):
         self.df = df
         self._emotion_order = list(config.EMOTION_MAP.values())
 
-    # ── public ──────────────────────────────────────────────────────────────
     def plot_class_distribution(self, save_path: str | None = None):
-        """
-        Bar chart: samples per emotion class.
-        Deliverable: 'Histogram of sample distributions' [cite: 22].
-        """
         counts = (
             self.df["emotion_name"]
             .value_counts()
@@ -121,7 +76,6 @@ class DataVisualizer:
                       color=plt.cm.tab10.colors[:len(counts)],
                       edgecolor="black", linewidth=0.6)
 
-        # Annotate counts on top of each bar
         for bar, count in zip(bars, counts.values):
             ax.text(bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + 2,
@@ -141,10 +95,6 @@ class DataVisualizer:
         plt.close(fig)
 
     def plot_sample_spectrograms(self, save_path: str | None = None):
-        """
-        Show one mel-spectrogram example per class.
-        Deliverable: 'One example sample from each class' [cite: 21].
-        """
         n_classes = len(self._emotion_order)
         fig = plt.figure(figsize=(20, 10))
         fig.suptitle("One Mel-Spectrogram Example per Emotion Class",
@@ -175,13 +125,10 @@ class DataVisualizer:
             print(f"[DataVisualizer] Spectrogram grid saved → {save_path}")
         plt.close(fig)
 
-    # ── private ─────────────────────────────────────────────────────────────
     @staticmethod
     def _load_mel(path: str) -> np.ndarray:
-        """Load a .wav file and return a mel-spectrogram in dB scale."""
         y, sr = librosa.load(path, sr=config.SAMPLE_RATE,
                              duration=config.DURATION)
-        # Pad if shorter than DURATION
         target_len = int(config.SAMPLE_RATE * config.DURATION)
         if len(y) < target_len:
             y = np.pad(y, (0, target_len - len(y)))
@@ -195,34 +142,19 @@ class DataVisualizer:
         return librosa.power_to_db(S, ref=np.max)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 class DataLoader:
-    """
-    High-level facade.
-
-    Usage
-    -----
-        loader = DataLoader()
-        df     = loader.run_exploration()
-    """
 
     def __init__(self):
         self.parser     = RAVDESSParser()
         self.df: pd.DataFrame | None = None
         self.visualizer: DataVisualizer | None = None
 
-    # ── public ──────────────────────────────────────────────────────────────
     def run_exploration(self) -> pd.DataFrame:
-        """Parse files, print stats, and generate both required plots."""
-
-        # 1. Parse
         self.df         = self.parser.parse()
         self.visualizer = DataVisualizer(self.df)
 
-        # 2. Print statistics
         self._print_statistics()
 
-        # 3. Plots
         dist_path = os.path.join(config.RESULTS_DIR, "class_distribution.png")
         spec_path = os.path.join(config.RESULTS_DIR, "sample_spectrograms.png")
 
@@ -231,7 +163,6 @@ class DataLoader:
 
         return self.df
 
-    # ── private ─────────────────────────────────────────────────────────────
     def _print_statistics(self):
         df = self.df
         counts = df["emotion_name"].value_counts()
@@ -250,7 +181,6 @@ class DataLoader:
             print(f"    {emotion:<10s} {n:>4d}  {bar}")
         print()
 
-        # Imbalance check
         min_c, max_c = counts.min(), counts.max()
         ratio = max_c / min_c
         if ratio > 1.5:
@@ -263,7 +193,6 @@ class DataLoader:
         print("=" * 55 + "\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     loader = DataLoader()
     df = loader.run_exploration()

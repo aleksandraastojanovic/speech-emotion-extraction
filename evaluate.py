@@ -1,12 +1,3 @@
-"""
-evaluate.py — Evaluation metrics and plots for the trained emotion CNN.
-
-Produces:
-  results/confusion_matrix.png
-  results/classification_report.txt
-  results/prediction_examples.png
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -17,14 +8,6 @@ from config import RESULTS_DIR, FOCAL_GAMMA
 
 
 class SoftmaxAverageEnsemble:
-    """
-    Averages the softmax outputs of several trained models.
-
-    Different architectures (scratch CNN vs EfficientNet transfer) make
-    decorrelated errors; averaging their probabilities cancels part of
-    those errors. Exposes the same predict/evaluate interface Evaluator
-    expects, so it can be dropped in wherever a single model is used.
-    """
 
     def __init__(self, models: list):
         self.models = models
@@ -49,23 +32,20 @@ class Evaluator:
         self.X_test      = X_test
         self.y_test      = y_test
         self.class_names = class_names
-        self._y_pred     = None   # cached after first call
+        self._y_pred     = None
 
-    # ------------------------------------------------------------------
     def _predict(self) -> np.ndarray:
         if self._y_pred is None:
             probs        = self.model.predict(self.X_test, verbose=0)
             self._y_pred = np.argmax(probs, axis=1)
         return self._y_pred
 
-    # ------------------------------------------------------------------
     def evaluate(self) -> dict:
         loss, acc = self.model.evaluate(self.X_test, self.y_test, verbose=1)
         print(f"\n[Evaluator] Test loss:     {loss:.4f}")
         print(f"[Evaluator] Test accuracy: {acc:.4f}  ({acc*100:.1f}%)")
         return {"loss": loss, "accuracy": acc}
 
-    # ------------------------------------------------------------------
     def plot_confusion_matrix(self) -> None:
         y_pred = self._predict()
         cm     = confusion_matrix(self.y_test, y_pred)
@@ -91,7 +71,6 @@ class Evaluator:
         plt.close(fig)
         print(f"[Evaluator] confusion matrix saved → {out}")
 
-    # ------------------------------------------------------------------
     def classification_report(self) -> None:
         y_pred  = self._predict()
         report  = sk_report(self.y_test, y_pred, target_names=self.class_names)
@@ -103,13 +82,11 @@ class Evaluator:
             f.write(report)
         print(f"[Evaluator] classification report saved → {out}")
 
-    # ------------------------------------------------------------------
     def plot_examples(self, n: int = 5) -> None:
         y_pred   = self._predict()
         correct  = np.where(y_pred == self.y_test)[0]
         wrong    = np.where(y_pred != self.y_test)[0]
 
-        # sample up to n from each group
         rng      = np.random.default_rng(42)
         correct  = rng.choice(correct, size=min(n, len(correct)), replace=False)
         wrong    = rng.choice(wrong,   size=min(n, len(wrong)),   replace=False)

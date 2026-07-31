@@ -1,21 +1,3 @@
-"""
-train_transfer.py — Two-phase training loop for TransferEmotionCNN.
-
-Phase 1 (frozen base)
-    Only the new classification head is trained.
-    Runs for PHASE1_EPOCHS epochs with Adam(TRANSFER_LR=1e-3).
-
-Phase 2 (fine-tuning)
-    Top FINETUNE_LAYERS of EfficientNetB0 are unfrozen.
-    Runs for PHASE2_EPOCHS additional epochs with Adam(FINETUNE_LR=1e-4).
-    A separate ModelCheckpoint saves to MODEL_TRANSFER_PATH so it never
-    overwrites the scratch CNN checkpoint.
-
-History plot
-    Single figure with accuracy and loss panels. A vertical dashed line marks
-    the Phase 1 / Phase 2 boundary, and another marks the best val_loss epoch.
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -45,13 +27,8 @@ class TransferTrainer:
         self.X_val   = X_val
         self.y_val   = y_val
 
-    # ── public ──────────────────────────────────────────────────────────────
     def train(self) -> tuple[tf.keras.callbacks.History,
                               tf.keras.callbacks.History]:
-        """
-        Run both phases. Returns (history_phase1, history_phase2).
-        The best model is saved to MODEL_TRANSFER_PATH by ModelCheckpoint.
-        """
         builder = TransferEmotionModel()
         model   = builder.build_model()
 
@@ -60,22 +37,17 @@ class TransferTrainer:
 
         print("\n[TransferTrainer] ── Phase 2: fine-tuning top layers ──")
         model = builder.prepare_finetuning(model)
-        # Carry over Phase 1's best val_accuracy so an early (worse) Phase 2
-        # epoch can't overwrite the better Phase 1 checkpoint.
         h2 = self._fit(model, PHASE2_EPOCHS,
                        best_so_far=max(h1.history["val_accuracy"]))
 
         return h1, h2
 
-    # ── private ─────────────────────────────────────────────────────────────
     def _fit(
         self,
         model: tf.keras.Model,
         epochs: int,
         best_so_far: float | None = None,
     ) -> tf.keras.callbacks.History:
-        # val_accuracy for model selection, val_loss for LR schedule
-        # (see train.py for rationale)
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_accuracy",
@@ -110,18 +82,11 @@ class TransferTrainer:
             shuffle=True,
         )
 
-    # ── plotting ────────────────────────────────────────────────────────────
     def plot_history(
         self,
         h1: tf.keras.callbacks.History,
         h2: tf.keras.callbacks.History,
     ) -> None:
-        """
-        Plot combined accuracy and loss curves for both phases.
-        A vertical dashed line marks the Phase 1/2 boundary.
-        Another marks the best val_loss epoch across both phases.
-        """
-        # Concatenate metrics from both phases
         def concat(key):
             return h1.history.get(key, []) + h2.history.get(key, [])
 
@@ -133,11 +98,10 @@ class TransferTrainer:
         total_epochs = len(acc)
         epochs       = range(1, total_epochs + 1)
         phase_split  = len(h1.history.get("loss", []))
-        best_ep      = int(np.argmax(val_acc)) + 1   # matches checkpoint
+        best_ep      = int(np.argmax(val_acc)) + 1
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4))
 
-        # — Accuracy —
         ax1.plot(epochs, acc,     label="train")
         ax1.plot(epochs, val_acc, label="val")
         ax1.axvline(phase_split, color="blue",  linestyle=":",
@@ -149,7 +113,6 @@ class TransferTrainer:
         ax1.set_ylabel("Accuracy")
         ax1.legend(fontsize=8)
 
-        # — Loss —
         ax2.plot(epochs, loss,     label="train")
         ax2.plot(epochs, val_loss, label="val")
         ax2.axvline(phase_split, color="blue",  linestyle=":",

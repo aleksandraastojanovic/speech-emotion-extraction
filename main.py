@@ -1,7 +1,6 @@
 """
-main.py — Full pipeline entry point for RAVDESS emotion CNN.
 
-Usage:
+
     python main.py                              # CNN from scratch (default)
     python main.py --mode transfer              # EfficientNetB0 transfer learning
     python main.py --mode ensemble              # average all model_*.keras (no training)

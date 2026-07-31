@@ -1,10 +1,3 @@
-"""
-train.py — Training loop for RAVDESS emotion CNN.
-
-Receives a compiled Keras model and numpy arrays from preprocess.py.
-Handles class weights, callbacks, and history plotting.
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -22,13 +15,7 @@ class Trainer:
         self.X_val   = X_val
         self.y_val   = y_val
 
-    # ------------------------------------------------------------------
     def train(self) -> tf.keras.callbacks.History:
-        # No class_weight — per-class augmentation in preprocess.py already
-        # balances the training distribution exactly.
-        # Model selection tracks val_accuracy: with focal loss on a small,
-        # noisy val set, val_loss keeps picking lucky early epochs.
-        # ReduceLROnPlateau stays on val_loss (smoother signal for LR).
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_accuracy",
@@ -63,15 +50,13 @@ class Trainer:
         )
         return history
 
-    # ------------------------------------------------------------------
     def plot_history(self, history: tf.keras.callbacks.History) -> None:
         hist      = history.history
         epochs    = range(1, len(hist["loss"]) + 1)
-        best_ep   = int(np.argmax(hist["val_accuracy"])) + 1   # matches checkpoint
+        best_ep   = int(np.argmax(hist["val_accuracy"])) + 1
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
-        # — Accuracy —
         ax1.plot(epochs, hist["accuracy"],     label="train")
         ax1.plot(epochs, hist["val_accuracy"], label="val")
         ax1.axvline(best_ep, color="gray", linestyle="--", label=f"best epoch {best_ep}")
@@ -80,7 +65,6 @@ class Trainer:
         ax1.set_ylabel("Accuracy")
         ax1.legend()
 
-        # — Loss —
         ax2.plot(epochs, hist["loss"],     label="train")
         ax2.plot(epochs, hist["val_loss"], label="val")
         ax2.axvline(best_ep, color="gray", linestyle="--", label=f"best epoch {best_ep}")
